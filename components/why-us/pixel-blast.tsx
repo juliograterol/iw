@@ -723,6 +723,7 @@ const PixelBlast: React.FC<PixelBlastProps> = ({
       ref={containerRef}
       className={`w-full h-full relative overflow-hidden ${className ?? ""}`}
       style={style}
+      id="pixel-blast"
       aria-label="PixelBlast interactive background"
     />
   );

@@ -11,6 +11,8 @@ import NavbarComponent from "@/components/navbar";
 import { PageTransitionProvider } from "@/components/PagetransitionContext";
 import { PageTransitionOutlet } from "@/components/page-transition-outlet";
 import { ThemeProvider } from "@/components/ThemeContext";
+import InteractiveCursor from "@/components/interactive-cursor";
+import { interactiveElements } from "./content/interactive-elemets";
 
 const poppins = Poppins({
   subsets: ["latin"],
@@ -44,6 +46,7 @@ export default function RootLayout({
       >
         <ThemeProvider>
           <AppLoader>
+            <InteractiveCursor interactiveElements={interactiveElements} />
             <PageTransitionProvider type="fade">
               <IWBg />
               <PageTransitionOutlet>
