@@ -1,7 +1,7 @@
 "use client";
 
 import { Label } from "flowbite-react";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { sendMail, formData } from "../lib/utils";
 import professionalOptions from "./professionalOptions";
 import Input from "./input";
@@ -39,6 +39,47 @@ const REQUIRED_FIELDS: FieldRule[] = [
   { id: "message", label: "Message" },
 ];
 
+type CountryOption = { name: string; iso: string; dial: string };
+
+// Used while the list loads, or if it can't be fetched.
+const FALLBACK_COUNTRIES: CountryOption[] = [
+  { name: "Australia", iso: "AU", dial: "+61" },
+  { name: "Canada", iso: "CA", dial: "+1" },
+  { name: "France", iso: "FR", dial: "+33" },
+  { name: "Germany", iso: "DE", dial: "+49" },
+  { name: "India", iso: "IN", dial: "+91" },
+  { name: "Mexico", iso: "MX", dial: "+52" },
+  { name: "Philippines", iso: "PH", dial: "+63" },
+  { name: "Spain", iso: "ES", dial: "+34" },
+  { name: "United Kingdom", iso: "GB", dial: "+44" },
+  { name: "United States", iso: "US", dial: "+1" },
+];
+
+const COUNTRIES_URL = "https://restcountries.com/v3.1/all?fields=name,cca2,idd";
+const GEO_URL = "https://ipapi.co/json/";
+
+type RestCountry = {
+  name: { common: string };
+  cca2: string;
+  idd?: { root?: string; suffixes?: string[] };
+};
+
+const toCountryOption = (c: RestCountry): CountryOption | null => {
+  const root = c.idd?.root;
+  if (!root) return null;
+  const suffixes = c.idd?.suffixes ?? [];
+  // Countries that share a root (e.g. +1) use the root alone.
+  const dial = suffixes.length === 1 ? root + suffixes[0] : root;
+  return { name: c.name.common, iso: c.cca2, dial };
+};
+
+/** Phone value in international format: dial code + digits, no trunk "0". */
+const toInternationalPhone = (dial: string, raw: string) => {
+  const value = raw.trim();
+  if (value.startsWith("+")) return `+${value.replace(/\D/g, "")}`;
+  return `${dial}${value.replace(/\D/g, "").replace(/^0+/, "")}`;
+};
+
 const MainForm = ({
   heading = "Speak with our team today!",
   socials = true,
@@ -52,6 +93,57 @@ const MainForm = ({
   const isMobile = useIsMobile();
   const { toast, show, dismiss } = useToast();
   const validation = useFieldErrors();
+  const [countries, setCountries] =
+    useState<CountryOption[]>(FALLBACK_COUNTRIES);
+  const [countriesStatus, setCountriesStatus] = useState<
+    "loading" | "ready" | "failed"
+  >("loading");
+  const [country, setCountry] = useState("");
+  const [dialIso, setDialIso] = useState("US");
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    const load = async <T,>(url: string): Promise<T> => {
+      const res = await fetch(url, { signal: controller.signal });
+      if (!res.ok) throw new Error(`${url} responded ${res.status}`);
+      return res.json();
+    };
+
+    (async () => {
+      const [list, geo] = await Promise.allSettled([
+        load<RestCountry[]>(COUNTRIES_URL),
+        load<{ country_code?: string }>(GEO_URL),
+      ]);
+      clearTimeout(timeout);
+
+      let options = FALLBACK_COUNTRIES;
+      if (list.status === "fulfilled" && Array.isArray(list.value)) {
+        const parsed = list.value
+          .map(toCountryOption)
+          .filter((c): c is CountryOption => c !== null)
+          .sort((a, b) => a.name.localeCompare(b.name));
+        if (parsed.length > 0) options = parsed;
+      }
+      setCountries(options);
+      setCountriesStatus(options === FALLBACK_COUNTRIES ? "failed" : "ready");
+
+      // Best-effort: preselect the visitor's location, never overriding input.
+      if (geo.status === "fulfilled") {
+        const iso = geo.value?.country_code?.toUpperCase();
+        const match = options.find((c) => c.iso === iso);
+        if (match) {
+          setCountry((prev) => prev || match.name);
+          setDialIso(match.iso);
+        }
+      }
+    })().catch(() => setCountriesStatus("failed"));
+
+    return () => {
+      clearTimeout(timeout);
+      controller.abort();
+    };
+  }, []);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -82,7 +174,10 @@ const MainForm = ({
       fullName:
         `${formData.get("firstname") ?? ""} ${formData.get("lastname") ?? ""}`.trim(),
       company: String(formData.get("company") ?? ""),
-      phone: String(formData.get("phone") ?? ""),
+      phone: toInternationalPhone(
+        countries.find((c) => c.iso === dialIso)?.dial ?? "",
+        String(formData.get("phoneNumber") ?? ""),
+      ),
       email: String(formData.get("email") ?? ""),
       size: String(formData.get("size") ?? ""),
       staff: String(formData.get("staff") ?? ""),
@@ -106,6 +201,7 @@ const MainForm = ({
       setTimeout(() => isSent(false), 5000);
 
       form.reset();
+      setCountry("");
       setProfessionals([]);
       validation.clear();
       show("success", "Thank you! Your message has been sent.");
@@ -172,15 +268,34 @@ const MainForm = ({
               />
             </FieldTip>
             <FieldTip {...validation.tip("phone")}>
-              <Input
-                id="phone"
-                name="phone"
-                type="tel"
-                placeholder="Phone Number"
-                autoComplete="tel"
-                required
-                {...validation.describe("phone")}
-              />
+              <div className="flex items-end gap-3">
+                <div className="w-28 shrink-0">
+                  <Select
+                    id="dialCode"
+                    aria-label="Country calling code"
+                    placeholder="Code"
+                    value={dialIso}
+                    onChange={setDialIso}
+                  >
+                    {countries.map((c) => (
+                      <option key={c.iso} value={c.iso}>
+                        {`${c.name} ${c.dial}`}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+                <Input
+                  id="phone"
+                  name="phoneNumber"
+                  type="tel"
+                  className="flex-1"
+                  placeholder="Phone Number"
+                  autoComplete="tel-national"
+                  pattern="[+0-9\s\-().]{5,}"
+                  required
+                  {...validation.describe("phone")}
+                />
+              </div>
             </FieldTip>
             <FieldTip {...validation.tip("email")}>
               <Input
@@ -204,28 +319,44 @@ const MainForm = ({
                 {...validation.describe("size")}
               />
             </FieldTip>
-            <FieldTip {...validation.tip("staff")}>
-              <Input
-                id="staff"
-                name="staff"
-                type="number"
-                placeholder="Number of Staff Required?"
-                autoComplete="off"
-                required
-                {...validation.describe("staff")}
-              />
-            </FieldTip>
-            <FieldTip {...validation.tip("country")}>
-              <Input
-                id="country"
-                name="country"
-                type="text"
-                placeholder="Which country are you based in?"
-                autoComplete="country-name"
-                required
-                {...validation.describe("country")}
-              />
-            </FieldTip>
+            <div className="md:grid md:grid-cols-2 flex flex-col gap-6 md:col-span-2 items-end">
+              <FieldTip {...validation.tip("staff")}>
+                <Input
+                  id="staff"
+                  name="staff"
+                  type="number"
+                  placeholder="Number of Staff Required?"
+                  autoComplete="off"
+                  required
+                  {...validation.describe("staff")}
+                />
+              </FieldTip>
+              <FieldTip {...validation.tip("country")}>
+                <Select
+                  id="country"
+                  placeholder="Which country are you based in?"
+                  required
+                  value={country}
+                  onChange={(selected) => {
+                    setCountry(selected);
+                    validation.touch("country", selected !== "");
+                  }}
+                  aria-busy={countriesStatus === "loading"}
+                  {...validation.describe("country")}
+                >
+                  {countries.map((c) => (
+                    <option key={c.iso} value={c.name}>
+                      {c.name}
+                    </option>
+                  ))}
+                </Select>
+                <span role="status" className="sr-only">
+                  {countriesStatus === "loading" && "Loading countries"}
+                  {countriesStatus === "failed" &&
+                    "Could not load the full country list. Showing a short list instead."}
+                </span>
+              </FieldTip>
+            </div>
           </div>
         </div>
         <div className="relative max-md:hidden w-full h-full">

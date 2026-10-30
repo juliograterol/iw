@@ -354,7 +354,7 @@ export default function Select(allProps: SelectProps) {
   return (
     <div
       ref={dropdownRef}
-      className="py-2 my-2 border-b border-current relative flex items-center justify-between w-full cursor-pointer select-none"
+      className="py-2 my-2 min-h-10 border-b border-current relative flex items-center justify-between w-full cursor-pointer select-none"
       role="combobox"
       tabIndex={0}
       aria-label={props["aria-label"] ?? placeholder}
